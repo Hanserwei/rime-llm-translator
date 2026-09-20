@@ -89,6 +89,8 @@
 
     > 本机装了 `claude` / `codex` / `agy` / `opencode` / `miyu` 中任意一个的话，不用填 key 也能直接用，见下面的「本机 CLI 后端」。
 
+    > opencode zen 从 09-19 起给免费模型加了一道「只能从 OpenCode 里用」的闸，第三方客户端一律 `403 · OpenCode's free tier can only be used from within OpenCode`。实测判据是请求得长得像 opencode 发的：流式、工具清单里有 `shell` 和 `read`、带 `x-opencode-*` 头。所以发往 `opencode.ai/zen` 的请求会自动改成这个形状（流式 + 两条永不调用的占位工具声明），其他节点一个字节都不动。这是对面服务端的策略，他们随时可能改判据，免费模型又开始报 403 的话就是这里过期了。
+
 ## 本机 CLI 后端
 
 除了填 API 地址和密钥，也可以把本机已经登录好的编码 agent 当供应商，走它们的订阅额度：

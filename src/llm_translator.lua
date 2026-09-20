@@ -844,6 +844,88 @@ local function max_tokens_for(cfg, profile, send_text, pinfo)
     return n
 end
 
+-- ------------------------------------------------------------------------------
+-- opencode Zen 免费档的客户端识别：请求体里的工具名
+--
+-- 09-19 起 Zen 对免费模型（big-pickle、mimo-v2.5-free 这类 -free 型号）加了一道
+-- 闸，第三方客户端一律
+-- `403 FreeTierError: OpenCode's free tier can only be used from within OpenCode`。
+-- 09-20 对真端点做了上百次对照实验（脚本在 Miyu 仓库的
+-- testkit/opencode-zen/freetier_probe.js），判据是**三件同时成立**：
+--
+--     stream: true
+--     tools 里同时有 (shell 或 bash) 和 read
+--     至少带一个 x-opencode-* 头（下面 opencode_zen_curl_lines 那段已经在发了）
+--
+-- 三条缺一不可，而且是**合取**——这也是排查时踩的坑：先去掉头、body 也不合格，
+-- 于是误判成「头不相干」；实际单独去掉任一个 x-opencode-* 头都还能过，一个都不
+-- 带才挡。所以这里只补 body 那一半，头那一半归 opencode_zen_curl_lines。
+--
+-- 逐条实测过、确认**不参与判定**的：User-Agent 的具体内容（完全不带 UA 才挡）、
+-- traceparent/b3、key 是真 key 还是字面量 public、body 大小、system 提示词
+-- （中文人格提示词照样 200）、工具的 description 与 parameters（全清空照样
+-- 200）、tools 里额外挂多少件自造工具。
+--
+-- 09-20 移植过来时另测出来一条 Miyu 那份笔记里没有的：**x-opencode-session 的
+-- 取值本身也参与判定**，必须是 `ses_` + 12 位十六进制 + 14 位 base62 这个形状，
+-- 多一位少一位、或者头 12 位不是十六进制，照样 403 FreeTierError（`ses_notanid`
+-- 也挡）。Miyu 的探针一直在生成合规 id，所以没变过这个量、也就没测出来。也就是
+-- 说下面 opencode_id 那 12+14 位不是装饰，改坏了整条 HTTP 线就废，别动。
+--
+-- 这个翻译器本身不开工具（一次性问答，不带会话、不写磁盘），所以补的是两条
+-- **占位声明**：名字对上就放行。描述里写明了不要调用；万一模型真回了 tool_calls，
+-- 正文为空，这一轮按「空回复」报错收场，不会执行任何东西。
+--
+-- ⚠️ 这是 opencode 服务端的策略，他们随时可能改判据。Zen 的免费模型重新开始报
+-- 403 的话，跑一遍上面那个探针看是哪一条变了，别靠猜。
+-- ------------------------------------------------------------------------------
+local ZEN_ROOT = "https://opencode.ai/zen"
+
+-- 判定按**端点**而不是节点名：那份配置用户可以随便改名，决定服务端怎么看这次
+-- 请求的是打到哪个地址。端点不止 /zen/v1 一个——Console Go 挂在 /zen/go/v1，
+-- 同一套网关——所以按 /zen 这一层整段判，新开的兄弟端点自动覆盖到。只认整段：
+-- /zenith/v1 不算。
+local function is_zen_endpoint(api_url)
+    local url = string.gsub(api_url or "", "/+$", "")
+    if string.sub(url, 1, #ZEN_ROOT) ~= ZEN_ROOT then return false end
+    local rest = string.sub(url, #ZEN_ROOT + 1)
+    return rest == "" or string.sub(rest, 1, 1) == "/"
+end
+
+-- shell 与 read 是实测出来的最小通过集：两个都在才放行，只留一个就挡（只有
+-- shell 403、只有 read 也 403）。bash 与 shell 等价，选 shell 是因为官方客户端
+-- 报的就是它。
+local ZEN_WIRE_TOOLS = { "shell", "read" }
+
+-- 占位声明。参数留空对象——实测 description 与 parameters 都不参与判定，给足
+-- 内容只会白占 token 和缓存前缀。
+local function zen_placeholder_tool(name)
+    return {
+        type = "function",
+        ["function"] = {
+            name = name,
+            description = "兼容占位声明，不要调用。",
+            parameters = { type = "object", properties = {} },
+        },
+    }
+end
+
+-- 把那三件里属于 body 的两件补上；不是 Zen 端点一个字节都不动。
+local function zen_lower_body(body, profile, protocol)
+    -- Zen 走的是 OpenAI 那套；真有人把 anthropic 协议指到这个地址，判据另算，
+    -- 这里不掺和。
+    if protocol == "anthropic" then return end
+    if not is_zen_endpoint(profile.api_url) then return end
+    body.stream = true
+    -- 流式下用量只在最后一帧里给，不点名要就没有（用量统计靠它）
+    body.stream_options = { include_usage = true }
+    local tools = {}
+    for _, name in ipairs(ZEN_WIRE_TOOLS) do
+        tools[#tools + 1] = zen_placeholder_tool(name)
+    end
+    body.tools = tools
+end
+
 local function build_body(cfg, profile, protocol, system_core, system_extra, user_content, send_text, pinfo)
     local body = { model = profile.model }
     body.max_tokens = max_tokens_for(cfg, profile, send_text or "", pinfo or { count = 1 })
@@ -882,6 +964,9 @@ local function build_body(cfg, profile, protocol, system_core, system_extra, use
             for k, v in pairs(obj) do body[k] = v end
         end
     end
+    -- Zen 免费档那道闸摆在最后：request_extra 覆盖不掉 stream / tools，覆盖掉
+    -- 就是整条请求 403。
+    zen_lower_body(body, profile, protocol)
     return body
 end
 
@@ -919,9 +1004,10 @@ local function opencode_id(prefix)
     return string.format("%s_%012x%s", prefix, (os.time() * 1000) % 0x1000000000000, table.concat(tail))
 end
 
--- 发往 Zen 时要追加进 curl 配置的行；不是 Zen 端点返回空表。
+-- 发往 Zen 时要追加进 curl 配置的行；不是 Zen 端点返回空表。判定与 body 那半
+-- 用同一个 is_zen_endpoint，两半必须同进同退：只补一半照样 403。
 local function opencode_zen_curl_lines(api_url)
-    if not string.find(api_url or "", "opencode.ai/zen", 1, true) then return {} end
+    if not is_zen_endpoint(api_url) then return {} end
     -- 会话 id 一次运行一个——opencode 自己也是一次 run 一个。
     if not opencode_session then opencode_session = opencode_id("ses") end
     return {
@@ -996,10 +1082,45 @@ local function extract_usage(protocol, data)
     }
 end
 
--- 从响应 JSON 里取正文；返回 (text, err, usage)
-local function extract_reply(protocol, response)
+-- 流式响应拼回一个非流式的响应对象，后面的解析原样复用。Zen 那条线必须
+-- stream:true（见 zen_lower_body），别的节点也可能被 request_extra 开成流式。
+local function collapse_sse(response)
+    local parts, usage, err = {}, nil, nil
+    for line in string.gmatch(response, "[^\r\n]+") do
+        local payload = string.match(line, "^data:%s*(.*)$")
+        if payload and payload ~= "" and payload ~= "[DONE]" then
+            local ok, frame = pcall(json.decode, payload)
+            if ok and type(frame) == "table" then
+                if err == nil and frame.error ~= nil then err = frame.error end
+                -- 用量只在最后一帧，后来的覆盖前面的
+                if type(frame.usage) == "table" then usage = frame.usage end
+                local choice = type(frame.choices) == "table" and frame.choices[1]
+                local delta = type(choice) == "table" and choice.delta
+                local content = type(delta) == "table" and delta.content
+                if type(content) == "string" then parts[#parts + 1] = content end
+            end
+        end
+    end
+    return {
+        error = err,
+        usage = usage,
+        choices = { { message = { content = table.concat(parts) } } },
+    }
+end
+
+-- 解出响应对象；返回 nil 表示这段根本不是 JSON
+local function decode_response(response)
+    -- 出错时上游回的是普通 JSON（连 Zen 的 403 也是），所以按开头认，不按节点认
+    if string.find(response, "^%s*data:") then return collapse_sse(response) end
     local ok, data = pcall(json.decode, response)
-    if not ok or type(data) ~= "table" then
+    if not ok or type(data) ~= "table" then return nil end
+    return data
+end
+
+-- 从响应里取正文；返回 (text, err, usage)
+local function extract_reply(protocol, response)
+    local data = decode_response(response)
+    if not data then
         return nil, "解析失败: " .. short(response, 40)
     end
     if type(data.error) == "table" then
@@ -1302,4 +1423,7 @@ return {
     _base64_encode = base64_encode,
     _http_request = http_request,
     _opencode_zen_curl_lines = opencode_zen_curl_lines,
+    _is_zen_endpoint = is_zen_endpoint,
+    _zen_lower_body = zen_lower_body,
+    _decode_response = decode_response,
 }

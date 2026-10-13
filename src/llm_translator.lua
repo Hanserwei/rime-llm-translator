@@ -1114,6 +1114,12 @@ local function decode_response(response)
     if string.find(response, "^%s*data:") then return collapse_sse(response) end
     local ok, data = pcall(json.decode, response)
     if not ok or type(data) ~= "table" then return nil end
+    -- Cline（api.cline.bot，以及原样转发它的 magpie ClinePass）的非流式响应外面多套
+    -- 一层 {"data": {...}}，流式不套。不拆就读不到 choices，次次「空回复」。
+    if data.choices == nil and data.content == nil and data.error == nil
+        and type(data.data) == "table" then
+        return data.data
+    end
     return data
 end
 

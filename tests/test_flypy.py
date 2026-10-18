@@ -122,6 +122,24 @@ class FlypyInitializationTests(unittest.TestCase):
         self.assertIn(";", pattern)
         self.assertEqual(self.tool.merge_schema_patch(merged, "double_pinyin_flypy"), (merged, "skipped"))
 
+    def test_flypy_disables_mint_input_limit_on_install_and_upgrade(self):
+        schema = "double_pinyin_flypy"
+        unlimited = '  "codeLengthLimit_processor": null\n'
+        generated = self.tool.render_schema_patch_file(schema)
+        self.assertIn(unlimited, generated)
+        self.assertNotIn("codeLengthLimit_processor", self.tool.render_schema_patch_file("rime_ice"))
+        for existing in (
+            'patch:\n  "llm_translator/input_scheme": "flypy"\n  "menu/page_size": 9\n',
+            'patch:\n  "llm_translator/input_scheme": "flypy"\n  "menu/page_size": 9\n  "codeLengthLimit_processor": 25\n',
+        ):
+            with self.subTest(existing=existing):
+                merged, status = self.tool.merge_schema_patch(existing, schema)
+                self.assertEqual(status, "upgraded")
+                self.assertIn(unlimited, merged)
+                self.assertEqual(merged.count('"codeLengthLimit_processor":'), 1)
+                self.assertIn('"menu/page_size": 9', merged)
+                self.assertEqual(self.tool.merge_schema_patch(merged, schema), (merged, "skipped"))
+
     def test_patch_handles_scalar_quotes_and_comments(self):
         for key, value, expected in (
             ('"speller/alphabet"', '"abc"', '"abc;"'),

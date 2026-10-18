@@ -2408,6 +2408,8 @@ def schema_patch_entries(schema_id):
              "llm_translator/input_scheme", '"flypy"'),
             ("# 6. schema 级触发词覆盖全局触发键（vv 在小鹤里是 zhui，不能再用）",
              "llm_translator/trigger", f'"{FLYPY_TRIGGER}"'),
+            ("# 7. 停用薄荷方案的 25 码输入限制，允许连续输入长句",
+             "codeLengthLimit_processor", "null"),
         ]
     return [
         ("# 1. 扩充允许输入的字符集：保留雾凇默认（含大写与辅码引导符 `），再允许在拼音中直接输入指定标点",

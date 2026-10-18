@@ -112,6 +112,8 @@ patch:
 
 这两项与初始化生成的处理器、翻译器、alphabet 和 recognizer 补丁一起使用。使用其他 ID 的自定义小鹤方案时，可将 `double_pinyin_flypy.custom.yaml` 中的这些补丁合并到对应方案的 `.custom.yaml`，保留自己的其他配置。可通过 `llm_translator/trigger` 单独修改触发键，同时在 alphabet 和 recognizer 中允许相应字符；`llm_translator/input_scheme: pinyin` 可以关闭该方案的双拼展开。
 
+薄荷小鹤方案默认通过 `codeLengthLimit_processor: 25` 限制编码长度，超过后会删除末尾输入，长句无法完整交给 AI。小鹤初始化补丁会用 `"codeLengthLimit_processor": null` 停用这个限制；已初始化过的用户再次运行 `rime-llm-config init` 并重新部署即可升级。该补丁也适用于没有此处理器的官方和雾凇小鹤方案。需要恢复原方案的长度限制时，从 `double_pinyin_flypy.custom.yaml` 删除这条补丁后重新部署。
+
 请求发送前，小鹤编码会按标准键位展开成带音节空格的全拼，支持零声母、`zh/ch/sh`、`ü` 和共用韵母键。前缀保持原样，HTTP、CLI 和 Miyu 后端共用这一步转换。自定义词库中的「常用英文词」和「拼音缩写映射」会保留原拼写；混输英文建议先加入常用英文词，或使用全大写拼写。无法识别的双字母码和末尾单个声母会原样交给模型纠错，未配置映射的简拼仍可能存在歧义。小鹤音形、形码和其他双拼布局不在当前支持范围内。
 
 从源码安装到用户目录（无需覆盖系统文件）：
@@ -228,7 +230,7 @@ miyu:wogangcaishuolesm    →  你说的是测试一下。
     llm_processor = llm_translator.processor
     ```
 
-2. 删除 `~/.local/share/fcitx5/rime/rime_ice.custom.yaml` 中的四条 patch；小鹤双拼还需要从 `double_pinyin_flypy.custom.yaml` 删除对应的 alphabet、processor、translator、recognizer 以及 `llm_translator/input_scheme`、`llm_translator/trigger` 补丁（如果文件是 init 新建的，直接删文件）：
+2. 删除 `~/.local/share/fcitx5/rime/rime_ice.custom.yaml` 中的四条 patch；小鹤双拼还需要从 `double_pinyin_flypy.custom.yaml` 删除对应的 alphabet、processor、translator、recognizer 以及 `llm_translator/input_scheme`、`llm_translator/trigger`、`codeLengthLimit_processor` 补丁（如果文件是 init 新建的，直接删文件）：
 
     ```
       # 1. 扩充允许输入的字符集：保留雾凇默认（含大写与辅码引导符 `），再允许在拼音中直接输入指定标点

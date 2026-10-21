@@ -452,8 +452,10 @@ local function expand_flypy(cfg, text)
             local syllables = {}
             repeat
                 local code = string.sub(body, pos, pos + 1)
-                if #code == 2 and string.match(code, "^[a-z][a-z]$") and not protected_at(pos + 1) then
-                    syllables[#syllables + 1] = flypy_syllables[code] or code
+                local syllable = flypy_syllables[code]
+                -- 合法音节优先：mkyi 是 ming yi，不能因为词库里有 ky 切成 m ky i
+                if #code == 2 and string.match(code, "^[a-z][a-z]$") and (syllable or not protected_at(pos + 1)) then
+                    syllables[#syllables + 1] = syllable or code
                     pos = pos + 2
                 else
                     syllables[#syllables + 1] = string.sub(body, pos, pos)

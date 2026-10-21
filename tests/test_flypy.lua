@@ -35,6 +35,11 @@ eq(llm._expand_flypy({}, "nihc中文123"), "ni hao 中文123")
 eq(llm._expand_flypy(cfg, "woyspython"), "wo yong python")
 eq(llm._expand_flypy(cfg, "woaiSteam"), "wo ai Steam")
 eq(llm._expand_flypy(cfg, "nihcmrfz"), "ni hao mrfz")
+local short = { vocab = { terms = { "dpi", "python" }, maps = { { "ky", "可以" } } } }
+eq(llm._expand_flypy(short, "mkyi"), "ming yi") -- valid syllable wins over a term starting mid-pair
+eq(llm._expand_flypy(short, "hdpi"), "hai pi")
+eq(llm._expand_flypy(short, "nihcky"), "ni hao ky")
+eq(llm._expand_flypy(short, "nihcfpython"), "ni hao f python") -- invalid pair may still yield to a term
 eq(llm._expand_flypy(cfg, "Visual Studio Code"), "Visual Studio Code")
 eq(llm._expand_flypy(cfg, ""), "")
 
